@@ -5,7 +5,15 @@ import pytest
 from app.config import FilterSettings
 from app.models import Genre, TmdbMatch
 from app.storage import EventRepository
-from app.telegram_worker import MAX_MEDIA_CAPTION_CHARS, MessageEnvelope, PipelineWorker, clean_forward_body_html, split_media_caption
+from app.telegram_worker import (
+    MAX_MEDIA_CAPTION_CHARS,
+    ButtonLink,
+    MessageEnvelope,
+    PipelineWorker,
+    clean_forward_body_html,
+    filter_resource_buttons,
+    split_media_caption,
+)
 
 
 @dataclass
@@ -35,10 +43,10 @@ class FakeLookupTmdb(FakeTmdb):
 
 class FakeSender:
     def __init__(self):
-        self.sent: list[tuple[str, str, object | None]] = []
+        self.sent: list[tuple[str, str, object | None, object | None]] = []
 
-    async def send_message(self, target: str, text: str, media: object | None = None) -> None:
-        self.sent.append((target, text, media))
+    async def send_message(self, target: str, text: str, media: object | None = None, buttons: object | None = None) -> None:
+        self.sent.append((target, text, media, buttons))
 
 
 @pytest.mark.anyio
@@ -248,3 +256,77 @@ def test_clean_forward_body_html_removes_ad_lines_and_keeps_resource_links():
     assert "115cdn.com" in cleaned
     assert "群主自用机场" not in cleaned
     assert "VidHub" not in cleaned
+
+
+def test_clean_forward_body_html_removes_hdhive_promotion_block():
+    body = "\n".join(
+        [
+            "\U0001f4d6 简介：这是一段影片简介。",
+            "\U0001f3f7 标签：#电影 #剧情",
+            "\U0001f440 \U0001f440 \U0001f440 \U0001f440 \U0001f440",
+            "\U0001fae5 HDHive 所有资源均为【自抓】【自购】",
+            "\U0001fae5 在本站发布的资源，禁在其他平台发布",
+            "\U0001fae5 免费开户 @whitecolaman @ListenXXK",
+            "\U0001f92c HDHive（影巢）永久VIP限时 ￥399",
+        ]
+    )
+
+    cleaned = clean_forward_body_html(body)
+
+    assert "影片简介" in cleaned
+    assert "Hdhive" not in cleaned
+    assert "HDHive" not in cleaned
+    assert "免费开户" not in cleaned
+    assert "\U0001f440" not in cleaned
+
+
+def test_clean_forward_body_html_removes_vip_promotion_footer():
+    body = "\n".join(["#华语电影", "\U0001f451开通VIP\U0001f451"])
+
+    assert clean_forward_body_html(body) == "#华语电影"
+
+
+def test_filter_resource_buttons_keeps_115_link_and_removes_official_site_button():
+    buttons = [
+        [
+            ButtonLink(text="\U0001f517 115 链接", url="https://115.com/s/example?password=1234"),
+            ButtonLink(text="官网", url="https://hdhive.com/"),
+        ]
+    ]
+
+    assert filter_resource_buttons(buttons) == [[buttons[0][0]]]
+
+
+@pytest.mark.anyio
+async def test_worker_forwards_only_resource_buttons(tmp_path):
+    repo = EventRepository(tmp_path / "events.sqlite3")
+    await repo.initialize()
+    sender = FakeSender()
+    worker = PipelineWorker(
+        tmdb_client=FakeTmdb(
+            TmdbMatch(
+                tmdb_id=1830,
+                media_type="movie",
+                title="战争之王",
+                original_title="Lord of War",
+                year=2005,
+                genres=[],
+            )
+        ),
+        sender=sender,
+        repository=repo,
+        filters=FilterSettings(),
+        target_channel="@target",
+    )
+    resource_button = ButtonLink(text="115 链接", url="https://115.com/s/example?password=1234")
+
+    await worker.process_message(
+        MessageEnvelope(
+            message_id=13,
+            source_channel="@source",
+            text="电影：战争之王 (2005)",
+            buttons=[[resource_button, ButtonLink(text="官网", url="https://hdhive.com/")]],
+        )
+    )
+
+    assert sender.sent[0][3] == [[resource_button]]

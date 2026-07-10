@@ -4,7 +4,7 @@ import asyncio
 import html as stdlib_html
 import re
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.config import FilterSettings, TelegramConfig
@@ -13,6 +13,39 @@ from app.rules import FilterConfig, build_forward_header, evaluate_blacklist, ex
 from app.storage import EventRepository
 
 MAX_MEDIA_CAPTION_CHARS = 950
+RESOURCE_URL_MARKERS = (
+    "115.com/",
+    "115cdn.com/",
+    "pan.quark.cn/",
+    "pan.baidu.com/",
+    "alipan.com/",
+    "aliyundrive.com/",
+    "123pan.com/",
+    "drive.uc.cn/",
+    "pan.xunlei.com/",
+    "mypikpak.com/",
+    "cloud.189.cn/",
+    "share.weiyun.com/",
+    "lanzou",
+)
+PROMOTION_MARKERS = (
+    "hdhive",
+    "开通vip",
+    "永久vip",
+    "免费开户",
+    "群主自用机场",
+    "守候网络",
+    "阿里云盘播放神器",
+    "vidhub",
+    "9折活动",
+    "本站发布的资源",
+)
+
+
+@dataclass(frozen=True)
+class ButtonLink:
+    text: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -22,6 +55,7 @@ class MessageEnvelope:
     text: str
     html_text: str | None = None
     media: Any | None = None
+    buttons: list[list[ButtonLink]] = field(default_factory=list)
 
 
 class TmdbSearcher(Protocol):
@@ -30,7 +64,13 @@ class TmdbSearcher(Protocol):
 
 
 class MessageSender(Protocol):
-    async def send_message(self, target: str, text: str, media: Any | None = None) -> None:
+    async def send_message(
+        self,
+        target: str,
+        text: str,
+        media: Any | None = None,
+        buttons: list[list[ButtonLink]] | None = None,
+    ) -> None:
         ...
 
 
@@ -106,7 +146,12 @@ class PipelineWorker:
 
         body = clean_forward_body_html(message.html_text or stdlib_html.escape(message.text))
         text = build_forward_header_html(match) + "\n\n" + body
-        await self.sender.send_message(self.target_channel, text, message.media)
+        await self.sender.send_message(
+            self.target_channel,
+            text,
+            message.media,
+            filter_resource_buttons(message.buttons),
+        )
         await self.repository.record_event(
             PipelineEvent(
                 telegram_message_id=message.message_id,
@@ -126,20 +171,27 @@ class TelethonSender:
     def set_client(self, client: Any) -> None:
         self.client = client
 
-    async def send_message(self, target: str, text: str, media: Any | None = None) -> None:
+    async def send_message(
+        self,
+        target: str,
+        text: str,
+        media: Any | None = None,
+        buttons: list[list[ButtonLink]] | None = None,
+    ) -> None:
         if self.client is None:
             raise RuntimeError("Telegram client is not connected")
+        telegram_buttons = _to_telethon_buttons(buttons or [])
         if media is not None:
             caption, remainder = split_media_caption(text)
             try:
-                await self.client.send_file(target, media, caption=caption, parse_mode="html")
+                await self.client.send_file(target, media, caption=caption, parse_mode="html", buttons=telegram_buttons)
             except Exception:
-                await self.client.send_message(target, text, link_preview=False, parse_mode="html")
+                await self.client.send_message(target, text, link_preview=False, parse_mode="html", buttons=telegram_buttons)
                 return
             if remainder:
                 await self.client.send_message(target, remainder, link_preview=False, parse_mode="html")
             return
-        await self.client.send_message(target, text, link_preview=False, parse_mode="html")
+        await self.client.send_message(target, text, link_preview=False, parse_mode="html", buttons=telegram_buttons)
 
 
 class TelethonForwarderService:
@@ -181,6 +233,7 @@ class TelethonForwarderService:
                     text=event.raw_text or "",
                     html_text=message_to_html(event.message),
                     media=getattr(event.message, "media", None),
+                    buttons=message_to_resource_buttons(event.message),
                 )
             )
 
@@ -223,6 +276,7 @@ class TelethonForwarderService:
                         text=text,
                         html_text=message_to_html(message),
                         media=getattr(message, "media", None),
+                        buttons=message_to_resource_buttons(message),
                     )
                 )
                 processed += 1
@@ -253,6 +307,7 @@ class TelethonForwarderService:
                 text=text,
                 html_text=message_to_html(message),
                 media=getattr(message, "media", None),
+                buttons=message_to_resource_buttons(message),
             )
         )
         return f"已处理源频道最新消息：{source}"
@@ -301,14 +356,44 @@ def clean_forward_body_html(text: str) -> str:
 def _is_ad_line(line: str) -> bool:
     if not line:
         return False
-    return bool(
-        line.startswith(("🌍", "🔥"))
-        or "群主自用机场" in line
-        or "守候网络" in line
-        or "阿里云盘播放神器" in line
-        or "VidHub" in line
-        or "9折活动" in line
-    )
+    normalized = line.casefold()
+    return line.count("👀") >= 3 or any(marker in normalized for marker in PROMOTION_MARKERS)
+
+
+def message_to_resource_buttons(message: Any) -> list[list[ButtonLink]]:
+    rows: list[list[ButtonLink]] = []
+    markup = getattr(message, "reply_markup", None)
+    for row in getattr(markup, "rows", []) or []:
+        links = [
+            ButtonLink(text=str(button.text or ""), url=str(button.url))
+            for button in row.buttons
+            if getattr(button, "url", None)
+        ]
+        if links:
+            rows.append(links)
+    return rows
+
+
+def filter_resource_buttons(buttons: list[list[ButtonLink]]) -> list[list[ButtonLink]]:
+    result: list[list[ButtonLink]] = []
+    for row in buttons:
+        resource_links = [button for button in row if _is_resource_url(button.url)]
+        if resource_links:
+            result.append(resource_links)
+    return result
+
+
+def _is_resource_url(url: str) -> bool:
+    normalized = url.casefold()
+    return any(marker in normalized for marker in RESOURCE_URL_MARKERS)
+
+
+def _to_telethon_buttons(buttons: list[list[ButtonLink]]) -> list[list[Any]] | None:
+    if not buttons:
+        return None
+    from telethon import Button
+
+    return [[Button.url(button.text, button.url) for button in row] for row in buttons]
 
 
 def split_media_caption(text: str) -> tuple[str, str]:
