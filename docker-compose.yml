@@ -1,0 +1,12 @@
+services:
+  forwarder:
+    build: .
+    container_name: tg-tmdb-forwarder
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+    ports:
+      - "8000:8000"

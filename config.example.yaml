@@ -1,0 +1,25 @@
+database_path: data/forwarder.sqlite3
+
+telegram:
+  source_channels:
+    - "@source_channel_username"
+  target_channel: "@target_channel_username"
+  session_path: data/session/tg-forwarder
+
+tmdb:
+  language: zh-CN
+  fallback_language: en-US
+
+filters:
+  blacklist_region_categories:
+    - 国产剧
+    - 欧美剧
+  blacklist_genres:
+    - Horror
+    - Documentary
+  blacklist_genre_ids:
+    - 99
+
+dashboard:
+  host: 0.0.0.0
+  port: 8000
