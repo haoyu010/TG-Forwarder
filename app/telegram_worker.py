@@ -394,7 +394,7 @@ def append_resource_links_html(body: str, buttons: list[list[ButtonLink]]) -> st
     for button in links:
         label = re.sub(r"^[^0-9A-Za-z\u4e00-\u9fff]+", "", button.text).strip() or button.url
         rendered.append(f'<a href="{stdlib_html.escape(button.url, quote=True)}">{stdlib_html.escape(label)}</a>')
-    return body.rstrip() + "\n\n资源链接：" + " | ".join(rendered)
+    return "资源链接：" + " | ".join(rendered) + "\n\n" + body.rstrip()
 
 
 def _is_resource_url(url: str) -> bool:

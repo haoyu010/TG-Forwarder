@@ -317,8 +317,8 @@ def test_append_resource_links_html_adds_clickable_115_link():
 
     rendered = append_resource_links_html(body, buttons)
 
-    assert rendered.endswith('<a href="https://115.com/s/example?password=1234">115 链接</a>')
-    assert "资源链接：" in rendered
+    assert rendered.startswith('资源链接：<a href="https://115.com/s/example?password=1234">115 链接</a>')
+    assert rendered.endswith(body)
 
 
 @pytest.mark.anyio
