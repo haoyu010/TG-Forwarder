@@ -144,14 +144,11 @@ class PipelineWorker:
             )
             return
 
+        resource_buttons = filter_resource_buttons(message.buttons)
         body = clean_forward_body_html(message.html_text or stdlib_html.escape(message.text))
+        body = append_resource_links_html(body, resource_buttons)
         text = build_forward_header_html(match) + "\n\n" + body
-        await self.sender.send_message(
-            self.target_channel,
-            text,
-            message.media,
-            filter_resource_buttons(message.buttons),
-        )
+        await self.sender.send_message(self.target_channel, text, message.media)
         await self.repository.record_event(
             PipelineEvent(
                 telegram_message_id=message.message_id,
@@ -325,7 +322,6 @@ def build_forward_header_html(match: Any) -> str:
             f"年份：{stdlib_html.escape(year)}",
             f'TMDB：<a href="{stdlib_html.escape(link)}">{stdlib_html.escape(tmdb_path)}</a>',
             f"分类：{stdlib_html.escape(match.region_category or '未分类')}",
-            f'链接：<a href="{stdlib_html.escape(link)}">{stdlib_html.escape(link)}</a>',
         ]
     )
 
@@ -357,7 +353,13 @@ def _is_ad_line(line: str) -> bool:
     if not line:
         return False
     normalized = line.casefold()
-    return line.count("👀") >= 3 or any(marker in normalized for marker in PROMOTION_MARKERS)
+    return bool(
+        line.count("👀") >= 3
+        or line.count("⬇") >= 2
+        or re.match(r"^(?:🏷\s*)?标签\s*[:：]", line)
+        or re.fullmatch(r"(?:#\S+\s*)+", line)
+        or any(marker in normalized for marker in PROMOTION_MARKERS)
+    )
 
 
 def message_to_resource_buttons(message: Any) -> list[list[ButtonLink]]:
@@ -381,6 +383,18 @@ def filter_resource_buttons(buttons: list[list[ButtonLink]]) -> list[list[Button
         if resource_links:
             result.append(resource_links)
     return result
+
+
+def append_resource_links_html(body: str, buttons: list[list[ButtonLink]]) -> str:
+    links = [button for row in buttons for button in row]
+    if not links:
+        return body
+
+    rendered = []
+    for button in links:
+        label = re.sub(r"^[^0-9A-Za-z\u4e00-\u9fff]+", "", button.text).strip() or button.url
+        rendered.append(f'<a href="{stdlib_html.escape(button.url, quote=True)}">{stdlib_html.escape(label)}</a>')
+    return body.rstrip() + "\n\n资源链接：" + " | ".join(rendered)
 
 
 def _is_resource_url(url: str) -> bool:

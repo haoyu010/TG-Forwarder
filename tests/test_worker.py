@@ -10,6 +10,7 @@ from app.telegram_worker import (
     ButtonLink,
     MessageEnvelope,
     PipelineWorker,
+    append_resource_links_html,
     clean_forward_body_html,
     filter_resource_buttons,
     split_media_caption,
@@ -280,10 +281,23 @@ def test_clean_forward_body_html_removes_hdhive_promotion_block():
     assert "\U0001f440" not in cleaned
 
 
+def test_clean_forward_body_html_removes_source_tag_line_and_down_arrows():
+    body = "\n".join(
+        [
+            "影片简介：这是一段影片简介。",
+            "\U0001f3f7 标签：#电影 #剧情 #4K",
+            "#华语电影",
+            "⬇️ ⬇️ ⬇️",
+        ]
+    )
+
+    assert clean_forward_body_html(body) == "影片简介：这是一段影片简介。"
+
+
 def test_clean_forward_body_html_removes_vip_promotion_footer():
     body = "\n".join(["#华语电影", "\U0001f451开通VIP\U0001f451"])
 
-    assert clean_forward_body_html(body) == "#华语电影"
+    assert clean_forward_body_html(body) == ""
 
 
 def test_filter_resource_buttons_keeps_115_link_and_removes_official_site_button():
@@ -297,8 +311,18 @@ def test_filter_resource_buttons_keeps_115_link_and_removes_official_site_button
     assert filter_resource_buttons(buttons) == [[buttons[0][0]]]
 
 
+def test_append_resource_links_html_adds_clickable_115_link():
+    body = "影片简介：这是一段影片简介。"
+    buttons = [[ButtonLink(text="🔗 115 链接", url="https://115.com/s/example?password=1234")]]
+
+    rendered = append_resource_links_html(body, buttons)
+
+    assert rendered.endswith('<a href="https://115.com/s/example?password=1234">115 链接</a>')
+    assert "资源链接：" in rendered
+
+
 @pytest.mark.anyio
-async def test_worker_forwards_only_resource_buttons(tmp_path):
+async def test_worker_converts_resource_buttons_to_message_links(tmp_path):
     repo = EventRepository(tmp_path / "events.sqlite3")
     await repo.initialize()
     sender = FakeSender()
@@ -329,4 +353,5 @@ async def test_worker_forwards_only_resource_buttons(tmp_path):
         )
     )
 
-    assert sender.sent[0][3] == [[resource_button]]
+    assert '资源链接：<a href="https://115.com/s/example?password=1234">115 链接</a>' in sender.sent[0][1]
+    assert sender.sent[0][3] is None
