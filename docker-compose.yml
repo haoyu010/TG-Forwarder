@@ -1,6 +1,6 @@
 services:
   forwarder:
-    build: .
+    image: ghcr.io/haoyu010/tg-forwarder:${IMAGE_TAG:-latest}
     container_name: tg-tmdb-forwarder
     restart: unless-stopped
     env_file:
