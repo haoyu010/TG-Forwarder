@@ -455,6 +455,13 @@ def init_db() -> sqlite3.Connection:
     con.execute("CREATE TABLE IF NOT EXISTS episodes (key TEXT PRIMARY KEY, mid INTEGER, sent_at TEXT)")
     con.execute("CREATE TABLE IF NOT EXISTS filtered (mid INTEGER PRIMARY KEY, reason TEXT, category TEXT, filtered_at TEXT)")
     con.execute("CREATE TABLE IF NOT EXISTS genres (key TEXT PRIMARY KEY, genres_json TEXT, fetched_at TEXT)")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS records ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, mid INTEGER UNIQUE, source_channel TEXT, "
+        "title TEXT, tmdb_id INTEGER, tmdb_media_type TEXT, tmdb_year INTEGER, "
+        "region_category TEXT, episode TEXT, decision TEXT, reason TEXT, "
+        "published TEXT, created_at TEXT)"
+    )
     con.commit()
     return con
 
@@ -477,6 +484,32 @@ def mark_filtered(con: sqlite3.Connection, post: Post, reason: str) -> None:
     con.execute("INSERT OR IGNORE INTO filtered(mid, reason, category, filtered_at) VALUES (?, ?, ?, ?)",
                 (post.mid, reason, post.meta.category, now_iso()))
     mark_sent(con, post, mark_episode=False)
+
+
+def record_event(con: sqlite3.Connection, post: Post, decision: str, reason: str) -> None:
+    con.execute(
+        "INSERT INTO records(mid, source_channel, title, tmdb_id, tmdb_media_type, "
+        "tmdb_year, region_category, episode, decision, reason, published, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(mid) DO UPDATE SET decision=excluded.decision, "
+        "reason=excluded.reason, created_at=excluded.created_at",
+        (
+            post.mid, "@" + SOURCE, post.meta.title, post.meta.tmdb_id,
+            post.meta.media_type, post.meta.year, post.meta.category,
+            post.meta.episode, decision, reason, post.published, now_iso(),
+        ),
+    )
+    con.commit()
+
+
+def reload_config(path: Path | str | None = None) -> None:
+    global CONFIG_PATH, FILTER_CONFIG, BLACKLIST_CATEGORIES, BLACKLIST_GENRES, BLACKLIST_GENRE_IDS
+    if path is not None:
+        CONFIG_PATH = Path(path)
+    FILTER_CONFIG = load_filters()
+    BLACKLIST_CATEGORIES = expand_categories(FILTER_CONFIG["blacklist_region_categories"])
+    BLACKLIST_GENRES = {g.casefold() for g in FILTER_CONFIG["blacklist_genres"] if g}
+    BLACKLIST_GENRE_IDS = set(FILTER_CONFIG["blacklist_genre_ids"])
 
 
 def episode_already_sent(con: sqlite3.Connection, post: Post) -> bool:
@@ -592,6 +625,7 @@ def run_once(args, bot: Bot | None, con: sqlite3.Connection | None) -> None:
             log(f"test send {post.mid} {post.meta.title} ({post.meta.category}) -> {TARGET} "
                 f"visible={visible_len(caption)} raw={len(caption)} buttons={len(post.buttons)}")
             bot.send_post(TARGET, caption, post.photo_url, post.buttons)
+            record_event(con, post, "forwarded", "test_send")
             mark_sent(con, post)
             return
         log("test send: no allowed post found")
@@ -613,21 +647,25 @@ def run_once(args, bot: Bot | None, con: sqlite3.Connection | None) -> None:
     for post in pending:
         if episode_already_sent(con, post):
             log(f"skip {post.mid} duplicate episode {episode_key(post)}")
+            record_event(con, post, "filtered", "duplicate_episode")
             mark_sent(con, post, mark_episode=False)
             continue
         caption = build_caption(post)
         if not post.meta.title:
             log(f"skip {post.mid} empty title")
+            record_event(con, post, "failed", "empty_title")
             mark_sent(con, post, mark_episode=False)
             continue
         ok, reason = evaluate_post(con, post)
         if not ok:
             log(f"filter {post.mid} {reason} {post.meta.title} ({post.meta.category})")
+            record_event(con, post, "filtered", reason)
             mark_filtered(con, post, reason)
             continue
         log(f"send {post.mid} {post.meta.title} ({post.meta.category}) -> {TARGET} "
             f"visible={visible_len(caption)} raw={len(caption)}")
         bot.send_post(TARGET, caption, post.photo_url, post.buttons)
+        record_event(con, post, "forwarded", "allowed")
         mark_sent(con, post)
         time.sleep(1.0)
 

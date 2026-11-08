@@ -1,0 +1,21 @@
+database_path: data/forwarder.sqlite3
+telegram:
+  source_channels:
+    - "@Ms20260601"
+  target_channel: "@xiaotiancaixu"
+  session_path: data/session/tg-forwarder
+filters:
+  blacklist_genres:
+    - 真人秀
+  blacklist_genre_ids:
+    - 99
+  blacklist_region_categories:
+    - 欧美剧
+    - 日韩剧
+    - 综艺
+    - 纪录片
+    - 日漫
+    - 未分类
+dashboard:
+  host: 0.0.0.0
+  port: 8000

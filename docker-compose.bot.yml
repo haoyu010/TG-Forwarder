@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bot
-    image: tg-ms20260601-forwarder:1.2.1
+    image: tg-ms20260601-forwarder:1.3.0
     container_name: tg-ms20260601-forwarder
     restart: unless-stopped
     init: true
@@ -22,12 +22,13 @@ services:
       STRIP_BRANDING: "0"
       KEEP_SOURCE_LINKS: "1"
       KEEP_BUTTONS: "1"
+    ports:
+      - "8001:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.bot.yaml:/app/config.yaml
       - ./data/bot:/data
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
