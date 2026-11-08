@@ -34,9 +34,16 @@ NOISE_TOKENS = {
 }
 
 PREFIX_PATTERN = re.compile(
-    r"^\s*(?:[^\w\u4e00-\u9fff@#]+[\s]*)*(资源名称|名称|标题|片名|电影|影片|剧集|电视剧|美剧|英剧|日剧|韩剧|国剧|陆剧|动漫|动画|纪录片|综艺)\s*[:：\-\s]+",
+    r"^\s*(?:[^\w\u4e00-\u9fff@#]+[\s]*)*(资源名称|名称|标题|片名|影视|电影|影片|剧集|电视剧|美剧|英剧|日剧|韩剧|国剧|陆剧|动漫|动画|纪录片|综艺)\s*[:：\-\s]+",
     flags=re.IGNORECASE,
 )
+
+LABELED_TITLE_PATTERN = re.compile(
+    r"^\s*(?:[^\w\u4e00-\u9fff@#]+[\s]*)*(资源名称|名称|标题|片名|影视|电影|影片|剧集|电视剧|美剧|英剧|日剧|韩剧|国剧|陆剧|动漫|动画|纪录片|综艺)\s*[:：\-\s]+(.+)$",
+    flags=re.IGNORECASE,
+)
+
+LABELED_YEAR_PATTERN = re.compile(r"(?:年份|上映|首播|发行)\s*[:：]\s*(19\d{2}|20\d{2})")
 
 MEDIA_TYPE_TAGS = {
     "movie": "#电影",
@@ -107,7 +114,7 @@ class FilterConfig:
 
 
 def extract_title(text: str) -> ExtractedTitle:
-    line = _first_useful_line(text)
+    line = _labeled_title_line(text) or _first_useful_line(text)
     line = _strip_markdown_noise(line)
     tmdb_id = _extract_tmdb_id(text)
     media_type_hint = _extract_media_type_hint(text)
@@ -121,7 +128,7 @@ def extract_title(text: str) -> ExtractedTitle:
     line = re.sub(r"\s+", " ", line).strip()
 
     year_match = re.search(r"\b(19\d{2}|20\d{2})\b", line)
-    year = int(year_match.group(1)) if year_match else None
+    year = int(year_match.group(1)) if year_match else _extract_labeled_year(text)
     if year_match:
         line = line[: year_match.start()].strip()
 
@@ -130,18 +137,38 @@ def extract_title(text: str) -> ExtractedTitle:
     return ExtractedTitle(name=name, year=year, tmdb_id=tmdb_id, media_type_hint=media_type_hint)
 
 
+def _labeled_title_line(text: str) -> str | None:
+    for raw_line in text.splitlines():
+        match = LABELED_TITLE_PATTERN.match(raw_line.strip())
+        if match:
+            return match.group(2).strip()
+    return None
+
+
+def _extract_labeled_year(text: str) -> int | None:
+    match = LABELED_YEAR_PATTERN.search(text)
+    return int(match.group(1)) if match else None
+
+
 def _strip_markdown_noise(text: str) -> str:
     return re.sub(r"[*`~]+", "", text)
 
 
 def _extract_tmdb_id(text: str) -> int | None:
-    match = re.search(r"TMDB\s*(?:ID)?\s*[:：]\s*(\d+)", text, flags=re.IGNORECASE)
+    match = re.search(r"(?:TMDB\s*(?:ID)?|tmdbid\s*=|\bID)\s*[:：=]\s*(\d+)", text, flags=re.IGNORECASE)
     if not match:
         return None
     return int(match.group(1))
 
 
 def _extract_media_type_hint(text: str) -> str | None:
+    labeled_type = re.search(r"(?:影视类型|类型)\s*[:：]\s*([^\n]+)", text)
+    if labeled_type:
+        value = labeled_type.group(1)
+        if re.search(r"(电影|影片)", value):
+            return "movie"
+        if re.search(r"(剧集|电视剧|番剧|动漫|综艺|纪录片)", value):
+            return "tv"
     first_line = _strip_markdown_noise(_first_useful_line(text))
     if re.search(r"(电影|影片|🎬)", first_line):
         return "movie"

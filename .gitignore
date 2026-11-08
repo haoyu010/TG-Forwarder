@@ -12,3 +12,5 @@ web/dist/
 
 deploy-package.zip
 *.zip
+.env.bot
+.env.bot

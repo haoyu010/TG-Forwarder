@@ -1,0 +1,32 @@
+services:
+  forwarder-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    image: tg-ms20260601-forwarder:1.2.0
+    container_name: tg-ms20260601-forwarder
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+      - .env.bot
+    environment:
+      SOURCE_CHANNEL: "Ms20260601"
+      TARGET_CHANNEL: "@xiaotiancaixu"
+      POLL_SECONDS: "30"
+      CONFIG_PATH: "/app/config.yaml"
+      DB_PATH: "/data/web_forwarder.sqlite3"
+      DEDUPE_EPISODES: "1"
+      ADD_HEADER: "1"
+      PRESERVE_FORMATTING: "1"
+      STRIP_BRANDING: "0"
+      KEEP_SOURCE_LINKS: "1"
+      KEEP_BUTTONS: "1"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data/bot:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
