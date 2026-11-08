@@ -305,12 +305,23 @@ def parse_posts(page: str, source: str) -> list[Post]:
 
 
 def fetch_posts(source: str) -> list[Post]:
-    with httpx.Client(
-        timeout=30, follow_redirects=True, headers={"User-Agent": UA}
-    ) as client:
-        response = client.get(f"https://t.me/s/{source}")
-        response.raise_for_status()
-    return parse_posts(response.text, source)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(60, connect=15),
+                follow_redirects=True,
+                headers={"User-Agent": UA},
+            ) as client:
+                response = client.get(f"https://t.me/s/{source}")
+                response.raise_for_status()
+            return parse_posts(response.text, source)
+        except Exception as exc:
+            last_exc = exc
+            log(f"fetch failed attempt {attempt + 1}/3: {exc}")
+            time.sleep(3 * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def clean_body(text_html: str) -> str:
