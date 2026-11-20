@@ -7,6 +7,7 @@ telegram:
 filters:
   allowed_region_categories:
     - 国产剧
+    - 国漫
   blocked_keywords:
     - 短剧
   blacklist_genres:

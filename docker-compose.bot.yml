@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bot
-    image: tg-ms20260601-forwarder:1.4.0
+    image: tg-ms20260601-forwarder:1.4.1
     container_name: tg-ms20260601-forwarder
     restart: unless-stopped
     init: true
@@ -32,5 +32,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
 
 
