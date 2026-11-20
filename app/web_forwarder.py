@@ -92,6 +92,7 @@ CATEGORY_MAP = {
     "美剧": "欧美剧", "英剧": "欧美剧", "德剧": "欧美剧", "法剧": "欧美剧",
     "西剧": "欧美剧", "意剧": "欧美剧", "俄剧": "欧美剧", "澳剧": "欧美剧",
     "加剧": "欧美剧", "英美剧": "欧美剧", "欧美剧": "欧美剧", "海外剧": "欧美剧",
+    "印度剧": "日韩剧", "印度电影": "日韩电影", "短剧": "短剧",
     "欧美电影": "欧美电影",
     "日剧": "日韩剧", "韩剧": "日韩剧", "泰剧": "日韩剧", "日韩剧": "日韩剧",
     "日韩电影": "日韩电影",
@@ -116,6 +117,10 @@ def load_filters() -> dict:
         "blacklist_region_categories": [
             str(x) for x in f.get("blacklist_region_categories", [])
         ],
+        "allowed_region_categories": [
+            str(x) for x in f.get("allowed_region_categories", [])
+        ],
+        "blocked_keywords": [str(x) for x in f.get("blocked_keywords", [])],
     }
 
 
@@ -135,6 +140,8 @@ def expand_categories(values: list[str]) -> set[str]:
 BLACKLIST_CATEGORIES = expand_categories(FILTERS["blacklist_region_categories"])
 BLACKLIST_GENRES = {g.casefold() for g in FILTERS["blacklist_genres"] if g}
 BLACKLIST_GENRE_IDS = set(FILTERS["blacklist_genre_ids"])
+ALLOWED_CATEGORIES = expand_categories(FILTERS["allowed_region_categories"])
+BLOCKED_KEYWORDS = [k for k in FILTERS["blocked_keywords"] if k]
 
 
 @dataclass
@@ -507,13 +514,16 @@ def record_event(con: sqlite3.Connection, post: Post, decision: str, reason: str
 
 
 def reload_config(path: Path | str | None = None) -> None:
-    global CONFIG_PATH, FILTER_CONFIG, BLACKLIST_CATEGORIES, BLACKLIST_GENRES, BLACKLIST_GENRE_IDS
+    global CONFIG_PATH, FILTERS, BLACKLIST_CATEGORIES, BLACKLIST_GENRES
+    global BLACKLIST_GENRE_IDS, ALLOWED_CATEGORIES, BLOCKED_KEYWORDS
     if path is not None:
         CONFIG_PATH = Path(path)
-    FILTER_CONFIG = load_filters()
-    BLACKLIST_CATEGORIES = expand_categories(FILTER_CONFIG["blacklist_region_categories"])
-    BLACKLIST_GENRES = {g.casefold() for g in FILTER_CONFIG["blacklist_genres"] if g}
-    BLACKLIST_GENRE_IDS = set(FILTER_CONFIG["blacklist_genre_ids"])
+    FILTERS = load_filters()
+    BLACKLIST_CATEGORIES = expand_categories(FILTERS["blacklist_region_categories"])
+    BLACKLIST_GENRES = {g.casefold() for g in FILTERS["blacklist_genres"] if g}
+    BLACKLIST_GENRE_IDS = set(FILTERS["blacklist_genre_ids"])
+    ALLOWED_CATEGORIES = expand_categories(FILTERS["allowed_region_categories"])
+    BLOCKED_KEYWORDS = [k for k in FILTERS["blocked_keywords"] if k]
 
 
 def episode_already_sent(con: sqlite3.Connection, post: Post) -> bool:
@@ -551,8 +561,22 @@ def tmdb_genres(con: sqlite3.Connection, tmdb_id: int | None,
 def evaluate_post(con: sqlite3.Connection, post: Post) -> tuple[bool, str]:
     raw = post.meta.category or "未分类"
     mapped = CATEGORY_MAP.get(raw, raw)
+
+    # 1) hard keyword blocks (短剧 etc.)
+    if BLOCKED_KEYWORDS:
+        haystack = f"{raw} {mapped} {post.meta.title} {post.text[:400]}".casefold()
+        for keyword in BLOCKED_KEYWORDS:
+            if keyword.casefold() in haystack:
+                return False, f"blocked_keyword:{keyword}"
+
+    # 2) whitelist: if configured, only these categories pass
+    if ALLOWED_CATEGORIES and raw not in ALLOWED_CATEGORIES and mapped not in ALLOWED_CATEGORIES:
+        return False, f"not_in_whitelist:{mapped}"
+
+    # 3) legacy blacklist
     if raw in BLACKLIST_CATEGORIES or mapped in BLACKLIST_CATEGORIES:
         return False, f"blacklisted_region:{mapped}"
+
     if not TMDB_API_KEY and (BLACKLIST_GENRES or BLACKLIST_GENRE_IDS):
         return True, "allowed"
     for gid, gname in tmdb_genres(con, post.meta.tmdb_id, post.meta.media_type):
@@ -571,8 +595,11 @@ def bootstrap(con: sqlite3.Connection, posts: list[Post]) -> None:
 
 
 def log_filters() -> None:
-    log("filters:", f"categories={sorted(BLACKLIST_CATEGORIES)}",
-        f"genres={sorted(BLACKLIST_GENRES)}", f"genre_ids={sorted(BLACKLIST_GENRE_IDS)}")
+    log("filters:", f"allowed={sorted(ALLOWED_CATEGORIES)}",
+        f"categories={sorted(BLACKLIST_CATEGORIES)}",
+        f"genres={sorted(BLACKLIST_GENRES)}",
+        f"genre_ids={sorted(BLACKLIST_GENRE_IDS)}",
+        f"keywords={BLOCKED_KEYWORDS}")
     if not TMDB_API_KEY and (BLACKLIST_GENRES or BLACKLIST_GENRE_IDS):
         log("warning: TMDB_API_KEY missing, genre filters inactive")
 

@@ -5,6 +5,10 @@ telegram:
   target_channel: "@xiaotiancaixu"
   session_path: data/session/tg-forwarder
 filters:
+  allowed_region_categories:
+    - 国产剧
+  blocked_keywords:
+    - 短剧
   blacklist_genres:
     - 真人秀
   blacklist_genre_ids:
